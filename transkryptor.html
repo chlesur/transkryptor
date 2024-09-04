@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transkryptor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.3.4/axios.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { text-align: center; margin-bottom: 30px; }
+        .block {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .progress-container { 
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            position: relative;
+        }
+        .progress-bar { 
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0;
+            transition: width 0.5s ease-in-out;
+        }
+        .progress-text {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            color: #000;
+            font-weight: bold;
+        }
+        .batch-progress { margin-bottom: 10px; }
+        .chunk-status { 
+            display: inline-block; 
+            width: 20px; 
+            height: 20px; 
+            margin-right: 5px;
+            border-radius: 50%;
+        }
+        .chunk-status.pending { background-color: #f0f0f0; }
+        .chunk-status.processing { background-color: orange; }
+        .chunk-status.completed { background-color: #4CAF50; }
+        .chunk-status.error { background-color: red; }
+        #debug, #rawTranscription, #result { 
+            font-family: monospace; 
+            white-space: pre-wrap; 
+            height: 30em;
+            overflow-y: auto; 
+            border: 1px solid #ddd;
+            padding: 10px;
+        }
+        button { 
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        button:hover { background-color: #45a049; }
+        input, label { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Transkryptor</h1>
+    
+    <div class="block">
+        <h2>Configuration</h2>
+        <div>
+            <label for="openaiKey">Clé API OpenAI:</label>
+            <input type="password" id="openaiKey" required>
+        </div>
+        <div>
+            <label for="anthropicKey">Clé API Anthropic:</label>
+            <input type="password" id="anthropicKey" required>
+        </div>
+        <button onclick="testAPIKeys()">Tester les clés API</button>
+    </div>
+    
+    <div class="block">
+        <h2>Fichier source</h2>
+        <div>
+            <label for="audioFile">Fichier audio (M4A):</label>
+            <input type="file" id="audioFile" accept=".m4a" required>
+        </div>
+        <button onclick="processAudio()">Transcrire</button>
+        <button onclick="loadTranscription()">Charger une transcription</button>
+        <input type="file" id="transcriptionFile" accept=".txt" style="display:none;">
+    </div>
+    
+    <div class="block">
+        <h2>Progression globale</h2>
+        <div class="progress-container">
+            <div id="globalProgress" class="progress-bar"></div>
+            <div class="progress-text" id="globalProgressText"></div>
+        </div>
+    </div>
+
+    <div class="block">
+        <h2>Progression par lot</h2>
+        <div id="batchProgress"></div>
+    </div>
+    
+    <div class="block">
+        <h2>Progression de l'analyse</h2>
+        <div class="progress-container">
+            <div id="analysisProgress" class="progress-bar"></div>
+            <div class="progress-text" id="analysisProgressText"></div>
+        </div>
+    </div>
+    
+    <div class="block">
+        <h2>Journaux</h2>
+        <div id="debug"></div>
+    </div>
+    
+    <div class="block">
+        <h2>Transcription brute</h2>
+        <div id="rawTranscription"></div>
+        <button onclick="downloadTranscription()">Télécharger la transcription</button>
+    </div>
+
+    <div class="block">
+        <h2>Analyse et organisation</h2>
+        <button onclick="analyzeAndOrganize()">Analyser et organiser</button>
+    </div>
+    
+    <div class="block">
+        <h2>Résultat</h2>
+        <div id="result"></div>
+    </div>
+
+    <div class="block">
+        <button id="downloadButton" onclick="downloadResult()" style="display: none;">Télécharger le résultat</button>
+    </div>
+
+    <script>
+        const chunkDuration = 60; // 60 secondes par morceau
+        const chunkOverlap = 0.03; // 30 ms de chevauchement
+        const batchSize = 10; // 10 morceaux par lot
+        let totalBatches = 0;
+        let completedBatches = 0;
+        let rawTranscription = "";
+
+        function getTimestamp() {
+            return new Date().toISOString().replace('T', ' ').substr(0, 19);
+        }
+
+        function log(message) {
+            const debugElement = document.getElementById("debug");
+            const timestampedMessage = `[${getTimestamp()}] ${message}`;
+            debugElement.textContent += timestampedMessage + "\n";
+            debugElement.scrollTop = debugElement.scrollHeight;
+            console.log(timestampedMessage);
+        }
+
+        async function testAPIKeys() {
+            const openaiKey = document.getElementById("openaiKey").value;
+            const anthropicKey = document.getElementById("anthropicKey").value;
+
+            if (!openaiKey || !anthropicKey) {
+                alert("Veuillez entrer les deux clés API avant de les tester.");
+                return;
+            }
+
+            try {
+                const response = await axios.post("http://localhost:3000/test-keys", {
+                    openaiKey,
+                    anthropicKey
+                });
+                
+                if (response.data.status === 'OK') {
+                    log("Clés API valides");
+                    alert("Les clés API sont valides.");
+                } else {
+                    throw new Error(response.data.message);
+                }
+            } catch (error) {
+                log("Erreur lors du test des clés API : " + error.message);
+                alert("Erreur lors du test des clés API : " + error.message);
+            }
+        }
+
+        async function processAudio() {
+            try {
+                const openaiKey = document.getElementById("openaiKey").value;
+                const anthropicKey = document.getElementById("anthropicKey").value;
+                const file = document.getElementById("audioFile").files[0];
+
+                if (!file || !openaiKey || !anthropicKey) {
+                    throw new Error("Veuillez remplir tous les champs et sélectionner un fichier audio.");
+                }
+
+                // Test silencieux des clés API
+                const response = await axios.post("http://localhost:3000/test-keys", {
+                    openaiKey,
+                    anthropicKey
+                });
+                
+                if (response.data.status === 'OK') {
+                    log("Clés API valides");
+                } else {
+                    throw new Error("Les clés API ne sont pas valides. Veuillez vérifier vos clés.");
+                }
+
+                document.getElementById("debug").textContent = "";
+                document.getElementById("batchProgress").innerHTML = "";
+                log("Début du processus...");
+
+                updateGlobalProgress(10);
+                log("Début de la transcription...");
+                rawTranscription = await transcribeAudioParallel(file, openaiKey);
+                log("Transcription terminée");
+                updateGlobalProgress(100);
+                document.getElementById("rawTranscription").textContent = rawTranscription;
+            } catch (error) {
+                log("Erreur détaillée: " + JSON.stringify(error, null, 2));
+                log("Message d'erreur: " + error.message);
+                log("Stack trace: " + error.stack);
+                alert("Une erreur est survenue. Veuillez vérifier les logs de débogage pour plus de détails.");
+            }
+        }
+
+        async function transcribeAudioParallel(file, apiKey) {
+            try {
+                log("Démarrage de transcribeAudioParallel");
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log("Contexte audio créé");
+                const arrayBuffer = await file.arrayBuffer();
+                log("ArrayBuffer créé");
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                log("AudioBuffer décodé");
+                const totalDuration = audioBuffer.duration;
+                log("Durée totale: " + totalDuration);
+                const chunks = Math.ceil(totalDuration / (chunkDuration - chunkOverlap));
+                log("Nombre de morceaux: " + chunks);
+                totalBatches = Math.ceil(chunks / batchSize);
+                log("Nombre total de lots: " + totalBatches);
+                completedBatches = 0;
+
+                const transcriptionPromises = [];
+
+                for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+                    const batch = [];
+                    initializeBatchProgress(batchIndex, Math.min(batchSize, chunks - batchIndex * batchSize));
+                    for (let j = batchIndex * batchSize; j < Math.min((batchIndex + 1) * batchSize, chunks); j++) {
+                        const start = j * (chunkDuration - chunkOverlap);
+                        const end = Math.min((j + 1) * chunkDuration, totalDuration);
+                        const chunkBuffer = extractChunk(audioBuffer, start, end);
+                        const chunkBlob = await audioBufferToWav(chunkBuffer);
+                        batch.push(transcribeChunkWithRetry(chunkBlob, apiKey, j, batchIndex));
+                    }
+                    const results = await Promise.all(batch);
+                    transcriptionPromises.push(...results);
+                    completedBatches++;
+                    updateGlobalProgress(10 + (completedBatches / totalBatches) * 90);
+                }
+
+                return transcriptionPromises.filter(t => t).join(' ');
+            } catch (error) {
+                log("Erreur dans transcribeAudioParallel: " + error.message);
+                throw error;
+            }
+        }
+
+        function extractChunk(buffer, start, end) {
+            try {
+                const sampleRate = buffer.sampleRate;
+                const channels = buffer.numberOfChannels;
+                const startOffset = Math.floor(start * sampleRate);
+                const endOffset = Math.floor(end * sampleRate);
+                const frameCount = endOffset - startOffset;
+
+                const newBuffer = new AudioBuffer({
+                    length: frameCount,
+                    numberOfChannels: channels,
+                    sampleRate: sampleRate
+                });
+
+                for (let channel = 0; channel < channels; channel++) {
+                    const channelData = buffer.getChannelData(channel);
+                    newBuffer.copyToChannel(channelData.slice(startOffset, endOffset), channel);
+                }
+
+                return newBuffer;
+            } catch (error) {
+                log("Erreur dans extractChunk: " + error.message);
+                throw error;
+            }
+        }
+
+        async function audioBufferToWav(buffer) {
+            try {
+                const wavFile = await encodeWAV(buffer);
+                return new Blob([wavFile], { type: 'audio/wav' });
+            } catch (error) {
+                log("Erreur dans audioBufferToWav: " + error.message);
+                throw error;
+            }
+        }
+
+        function encodeWAV(samples) {
+            try {
+                const buffer = new ArrayBuffer(44 + samples.length * 2);
+                const view = new DataView(buffer);
+
+                writeString(view, 0, 'RIFF');
+                view.setUint32(4, 36 + samples.length * 2, true);
+                writeString(view, 8, 'WAVE');
+                writeString(view, 12, 'fmt ');
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true);
+                view.setUint16(22, 1, true);
+                view.setUint32(24, samples.sampleRate, true);
+                view.setUint32(28, samples.sampleRate * 2, true);
+                view.setUint16(32, 2, true);
+                view.setUint16(34, 16, true);
+                writeString(view, 36, 'data');
+                view.setUint32(40, samples.length * 2, true);
+
+                const floatTo16BitPCM = (output, offset, input) => {
+                    for (let i = 0; i < input.length; i++, offset += 2) {
+                        const s = Math.max(-1, Math.min(1, input[i]));
+                        output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                    }
+                };
+
+                floatTo16BitPCM(view, 44, samples.getChannelData(0));
+
+                return buffer;
+            } catch (error) {
+                log("Erreur dans encodeWAV: " + error.message);
+                throw error;
+            }
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        async function transcribeChunkWithRetry(chunkBlob, apiKey, chunkIndex, batchIndex, retries = 10) {
+            updateChunkStatus(batchIndex, chunkIndex % batchSize, 'processing');
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    const result = await transcribeChunk(chunkBlob, apiKey, chunkIndex, batchIndex, 20000 + attempt * 20000);
+                    updateChunkStatus(batchIndex, chunkIndex % batchSize, 'completed');
+                    return result;
+                } catch (error) {
+                    if (attempt === retries - 1) {
+                        log(`Échec de la transcription du morceau ${chunkIndex + 1} après ${retries} tentatives: ${error.message}`);
+                        updateChunkStatus(batchIndex, chunkIndex % batchSize, 'error');
+                        return "";
+                    }
+                    log(`Tentative ${attempt + 1} échouée pour le morceau ${chunkIndex + 1}. Nouvelle tentative...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+                }
+            }
+        }
+
+        async function transcribeChunk(chunkBlob, apiKey, chunkIndex, batchIndex, timeout) {
+            const formData = new FormData();
+            formData.append("file", chunkBlob, `chunk_${chunkIndex}.wav`);
+            formData.append("model", "whisper-1");
+
+            try {
+                log(`Traitement du morceau ${chunkIndex + 1} commencé`);
+                const response = await axios.post("https://api.openai.com/v1/audio/transcriptions", formData, {
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "multipart/form-data"
+                    },
+                    timeout: timeout,
+                });
+                log(`Traitement du morceau ${chunkIndex + 1} terminé`);
+                return response.data.text;
+            } catch (error) {
+                log(`Erreur lors de la transcription du morceau ${chunkIndex + 1}: ${error.message}`);
+                throw error;
+            }
+        }
+
+        async function analyzeAndOrganize() {
+            try {
+                const anthropicKey = document.getElementById("anthropicKey").value;
+                if (!rawTranscription || !anthropicKey) {
+                    throw new Error("Veuillez d'abord transcrire un fichier audio ou charger une transcription.");
+                }
+        
+                log("Début de l'analyse et de l'organisation...");
+                updateGlobalProgress(0);
+                
+                const sentences = rawTranscription.match(/[^.!?]+[.!?]+/g) || [];
+                const batchSize = 1500; // Réduire la taille du lot pour laisser de la place à la réponse
+                let currentBatch = "";
+                let batches = [];
+                let tokenCount = 0;
+        
+                for (let sentence of sentences) {
+                    const sentenceTokens = sentence.split(/\s+/).length; // Estimation grossière des tokens
+                    if (tokenCount + sentenceTokens > batchSize && currentBatch) {
+                        batches.push(currentBatch.trim());
+                        currentBatch = "";
+                        tokenCount = 0;
+                    }
+                    currentBatch += sentence + " ";
+                    tokenCount += sentenceTokens;
+                }
+                if (currentBatch) {
+                    batches.push(currentBatch.trim());
+                }
+        
+                const totalBatches = batches.length;
+                let completedBatches = 0;
+                let fullAnalysis = '';
+        
+                function updateAnalysisProgress(completed, total) {
+                    const percent = (completed / total) * 100;
+                    const progressBar = document.getElementById("analysisProgress");
+                    progressBar.style.width = `${percent}%`;
+                    document.getElementById("analysisProgressText").textContent = `${completed}/${total}`;
+                }
+        
+                for (let i = 0; i < totalBatches; i++) {
+                    log(`Traitement du lot ${i+1}/${totalBatches}`);
+        
+                    const prompt = `
+                    Ceci est le lot ${i+1}/${totalBatches} d'une longue transcription. Votre tâche est de fournir un verbatim propre :
+        
+                    1. Corrigez les erreurs de français et de grammaire sans changer le contenu ou le style du discours.
+                    2. Assurez-vous que la ponctuation est correcte et que le texte est facilement lisible.
+                    3. Ne faites pas d'analyse, ne résumez pas, et ne changez pas le contenu. Concentrez-vous uniquement sur la correction et la clarté du texte.
+        
+                    Transcription (lot ${i+1}/${totalBatches}) :
+                    ${batches[i]}
+                    `;
+        
+                    const response = await axios.post('http://localhost:3000/analyze', {
+                        prompt,
+                        apiKey: anthropicKey
+                    });
+        
+                    fullAnalysis += response.data.content[0].text + '\n\n';
+                    document.getElementById("result").textContent = fullAnalysis;
+                    
+                    completedBatches++;
+                    updateAnalysisProgress(completedBatches, totalBatches);
+                    log(`Lot ${i+1}/${totalBatches} traité. Tokens utilisés : ${response.data.tokenCount}, Tokens de réponse : ${response.data.responseTokenCount}`);
+                }
+        
+                log("Tous les lots ont été traités. Début de l'analyse finale...");
+        
+                // Analyse finale
+                const finalPrompt = `
+                Voici la transcription complète et corrigée d'un long document. Veuillez effectuer les tâches suivantes :
+        
+                1. Résumez les points clés principaux de l'ensemble de la transcription.
+                2. Créez une fiche de révision précise adaptée à un étudiant de première année de droit qui lui permet d'apprendre les points clefs de son cours sans rien ommettre.
+                3. Proposez 20 questions pertinentes avec leurs réponses, couvrant les aspects les plus significatifs de l'ensemble du document.
+        
+                Transcription complète :
+                ${fullAnalysis}
+                `;
+        
+                log("Envoi de la demande d'analyse finale...");
+                const finalResponse = await axios.post('http://localhost:3000/analyze', {
+                    prompt: finalPrompt,
+                    apiKey: anthropicKey
+                });
+        
+                document.getElementById("result").textContent += "\n\nANALYSE FINALE:\n\n" + finalResponse.data.content[0].text;
+                updateGlobalProgress(100);
+                document.getElementById("downloadButton").style.display = "block";
+                log("Analyse finale terminée. Tokens utilisés : " + finalResponse.data.tokenCount + ", Tokens de réponse : " + finalResponse.data.responseTokenCount);
+            } catch (error) {
+                log("Erreur lors de l'analyse : " + error.message);
+                alert("Une erreur est survenue lors de l'analyse. Veuillez vérifier les logs de débogage pour plus de détails.");
+            }
+        }
+        
+
+        function updateGlobalProgress(percent) {
+            document.getElementById("globalProgress").style.width = `${percent}%`;
+            document.getElementById("globalProgressText").textContent = `${Math.round(percent)}%`;
+        }
+
+        function initializeBatchProgress(batchIndex, size) {
+            const batchProgressContainer = document.getElementById("batchProgress");
+            const batchElement = document.createElement("div");
+            batchElement.className = "batch-progress";
+            batchElement.innerHTML = `Lot ${batchIndex + 1}: `;
+            for (let i = 0; i < size; i++) {
+                const chunkStatus = document.createElement("span");
+                chunkStatus.className = "chunk-status pending";
+                chunkStatus.id = `chunk-${batchIndex}-${i}`;
+                batchElement.appendChild(chunkStatus);
+            }
+            batchProgressContainer.appendChild(batchElement);
+        }
+
+        function updateChunkStatus(batchIndex, chunkIndex, status) {
+            const chunkElement = document.getElementById(`chunk-${batchIndex}-${chunkIndex}`);
+            if (chunkElement) {
+                chunkElement.className = `chunk-status ${status}`;
+            }
+        }
+
+        function downloadTranscription() {
+            const blob = new Blob([rawTranscription], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = "transcription.txt";
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function loadTranscription() {
+            const input = document.getElementById('transcriptionFile');
+            input.click();
+            input.onchange = function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        rawTranscription = e.target.result;
+                        document.getElementById("rawTranscription").textContent = rawTranscription;
+                        log("Transcription chargée avec succès");
+                    };
+                    reader.readAsText(file);
+                }
+            };
+        }
+
+        function downloadResult() {
+            const result = document.getElementById("result").textContent;
+            const blob = new Blob([result], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = "analysis_result.txt";
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
