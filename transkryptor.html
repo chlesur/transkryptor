@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Transkryptor</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.3.4/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         body { 
             font-family: Arial, sans-serif; 
-            max-width: 800px; 
-            margin: 0 auto; 
-            padding: 20px; 
+            margin: 0;
+            padding: 20px;
             display: flex;
             flex-direction: column;
-            align-items: center;
+            min-height: 100vh;
         }
         h1 { text-align: center; margin-bottom: 30px; }
+        .main-container {
+            display: flex;
+            flex: 1;
+        }
+        .column {
+            flex: 1;
+            padding: 0 20px;
+            overflow-y: auto;
+        }
         .block {
-            width: 100%;
             border: 1px solid #ddd;
             border-radius: 5px;
             padding: 20px;
@@ -58,13 +66,14 @@
         .chunk-status.processing { background-color: orange; }
         .chunk-status.completed { background-color: #4CAF50; }
         .chunk-status.error { background-color: red; }
-        #debug, #rawTranscription, #result { 
+        #debug, #rawTranscription, #analyzeResult, #synthesisResult { 
             font-family: monospace; 
             white-space: pre-wrap; 
-            height: 30em;
+            height: 300px;
             overflow-y: auto; 
             border: 1px solid #ddd;
             padding: 10px;
+            margin-top: 10px;
         }
         button { 
             padding: 10px 20px;
@@ -74,6 +83,7 @@
             border-radius: 5px;
             cursor: pointer;
             margin-top: 15px;
+            margin-bottom: 15px;
         }
         button:hover { background-color: #45a049; }
         input, label { margin-bottom: 10px; }
@@ -82,74 +92,74 @@
 <body>
     <h1>Transkryptor</h1>
     
-    <div class="block">
-        <h2>Configuration</h2>
-        <div>
-            <label for="openaiKey">Clé API OpenAI:</label>
-            <input type="password" id="openaiKey" required>
-        </div>
-        <div>
-            <label for="anthropicKey">Clé API Anthropic:</label>
-            <input type="password" id="anthropicKey" required>
-        </div>
-        <button onclick="testAPIKeys()">Tester les clés API</button>
-    </div>
-    
-    <div class="block">
-        <h2>Fichier source</h2>
-        <div>
-            <label for="audioFile">Fichier audio (M4A):</label>
-            <input type="file" id="audioFile" accept=".m4a" required>
-        </div>
-        <button onclick="processAudio()">Transcrire</button>
-        <button onclick="loadTranscription()">Charger une transcription</button>
-        <input type="file" id="transcriptionFile" accept=".txt" style="display:none;">
-    </div>
-    
-    <div class="block">
-        <h2>Progression globale</h2>
-        <div class="progress-container">
-            <div id="globalProgress" class="progress-bar"></div>
-            <div class="progress-text" id="globalProgressText"></div>
-        </div>
-    </div>
+    <div class="main-container">
+        <div class="column">
+            <div class="block">
+                <h2>Configuration</h2>
+                <div>
+                    <label for="openaiKey">Clé API OpenAI:</label>
+                    <input type="password" id="openaiKey" required>
+                </div>
+                <div>
+                    <label for="anthropicKey">Clé API Anthropic:</label>
+                    <input type="password" id="anthropicKey" required>
+                </div>
+                <button onclick="testAPIKeys()">Tester les clés API</button>
+            </div>
+            
+            <div class="block">
+                <h2>Fichier source</h2>
+                <div>
+                    <label for="audioFile">Fichier audio (M4A):</label>
+                    <input type="file" id="audioFile" accept=".m4a" required>
+                </div>
+                <button onclick="processAudio()">Transcrire</button>
+                <button onclick="loadTranscription()">Charger une transcription</button>
+                <button onclick="loadAnalysis()">Charger une analyse</button>
+                <input type="file" id="transcriptionFile" accept=".txt" style="display:none;">
+                <input type="file" id="analysisFile" accept=".txt" style="display:none;">
+            </div>
 
-    <div class="block">
-        <h2>Progression par lot</h2>
-        <div id="batchProgress"></div>
-    </div>
-    
-    <div class="block">
-        <h2>Progression de l'analyse</h2>
-        <div class="progress-container">
-            <div id="analysisProgress" class="progress-bar"></div>
-            <div class="progress-text" id="analysisProgressText"></div>
+            <div class="block">
+                <h2>Progression globale</h2>
+                <div class="progress-container">
+                    <div id="globalProgress" class="progress-bar"></div>
+                    <div class="progress-text" id="globalProgressText"></div>
+                </div>
+            </div>
+
+            <div class="block">
+                <h2>Progression par lot</h2>
+                <div id="batchProgress"></div>
+            </div>
+            
+            <div class="block">
+                <h2>Journaux</h2>
+                <div id="debug"></div>
+            </div>
         </div>
-    </div>
-    
-    <div class="block">
-        <h2>Journaux</h2>
-        <div id="debug"></div>
-    </div>
-    
-    <div class="block">
-        <h2>Transcription brute</h2>
-        <div id="rawTranscription"></div>
-        <button onclick="downloadTranscription()">Télécharger la transcription</button>
-    </div>
 
-    <div class="block">
-        <h2>Analyse et organisation</h2>
-        <button onclick="analyzeAndOrganize()">Analyser et organiser</button>
-    </div>
-    
-    <div class="block">
-        <h2>Résultat</h2>
-        <div id="result"></div>
-    </div>
+        <div class="column">
+            <div class="block">
+                <h2>Transcription brute</h2>
+                <div id="rawTranscription"></div>
+                <button onclick="downloadTranscription()">Télécharger la transcription</button>
+            </div>
 
-    <div class="block">
-        <button id="downloadButton" onclick="downloadResult()" style="display: none;">Télécharger le résultat</button>
+            <div class="block">
+                <h2>Analyse</h2>
+                <button onclick="analyzeTranscription()">Analyser la transcription</button>
+                <div id="analyzeResult"></div>
+                <button id="downloadAnalysisButton" onclick="downloadAnalysis()" style="display: none;">Télécharger l'analyse</button>
+            </div>
+
+            <div class="block">
+                <h2>Synthèse</h2>
+                <button id="synthesizeButton" onclick="synthesizeAnalysis()" style="display: none;">Synthétiser l'analyse</button>
+                <div id="synthesisResult"></div>
+                <button id="downloadSynthesisButton" onclick="downloadSynthesis()" style="display: none;">Télécharger la synthèse</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -159,6 +169,7 @@
         let totalBatches = 0;
         let completedBatches = 0;
         let rawTranscription = "";
+        let analyzedTranscription = "";
 
         function getTimestamp() {
             return new Date().toISOString().replace('T', ' ').substr(0, 19);
@@ -399,24 +410,24 @@
             }
         }
 
-        async function analyzeAndOrganize() {
+        async function analyzeTranscription() {
             try {
                 const anthropicKey = document.getElementById("anthropicKey").value;
                 if (!rawTranscription || !anthropicKey) {
                     throw new Error("Veuillez d'abord transcrire un fichier audio ou charger une transcription.");
                 }
-        
-                log("Début de l'analyse et de l'organisation...");
+
+                log("Début de l'analyse...");
                 updateGlobalProgress(0);
                 
                 const sentences = rawTranscription.match(/[^.!?]+[.!?]+/g) || [];
-                const batchSize = 1500; // Réduire la taille du lot pour laisser de la place à la réponse
+                const batchSize = 1000;
                 let currentBatch = "";
                 let batches = [];
                 let tokenCount = 0;
-        
+
                 for (let sentence of sentences) {
-                    const sentenceTokens = sentence.split(/\s+/).length; // Estimation grossière des tokens
+                    const sentenceTokens = sentence.split(/\s+/).length;
                     if (tokenCount + sentenceTokens > batchSize && currentBatch) {
                         batches.push(currentBatch.trim());
                         currentBatch = "";
@@ -428,75 +439,88 @@
                 if (currentBatch) {
                     batches.push(currentBatch.trim());
                 }
-        
+
                 const totalBatches = batches.length;
                 let completedBatches = 0;
-                let fullAnalysis = '';
-        
+                analyzedTranscription = '';
+
                 function updateAnalysisProgress(completed, total) {
                     const percent = (completed / total) * 100;
-                    const progressBar = document.getElementById("analysisProgress");
-                    progressBar.style.width = `${percent}%`;
-                    document.getElementById("analysisProgressText").textContent = `${completed}/${total}`;
+                    updateGlobalProgress(percent);
                 }
-        
+
                 for (let i = 0; i < totalBatches; i++) {
                     log(`Traitement du lot ${i+1}/${totalBatches}`);
-        
+
                     const prompt = `
                     Ceci est le lot ${i+1}/${totalBatches} d'une longue transcription. Votre tâche est de fournir un verbatim propre :
-        
+
                     1. Corrigez les erreurs de français et de grammaire sans changer le contenu ou le style du discours.
                     2. Assurez-vous que la ponctuation est correcte et que le texte est facilement lisible.
                     3. Ne faites pas d'analyse, ne résumez pas, et ne changez pas le contenu. Concentrez-vous uniquement sur la correction et la clarté du texte.
-        
+
                     Transcription (lot ${i+1}/${totalBatches}) :
                     ${batches[i]}
                     `;
-        
+
                     const response = await axios.post('http://localhost:3000/analyze', {
                         prompt,
                         apiKey: anthropicKey
                     });
-        
-                    fullAnalysis += response.data.content[0].text + '\n\n';
-                    document.getElementById("result").textContent = fullAnalysis;
+
+                    analyzedTranscription += response.data.content[0].text + '\n\n';
+                    document.getElementById("analyzeResult").textContent = analyzedTranscription;
                     
                     completedBatches++;
                     updateAnalysisProgress(completedBatches, totalBatches);
                     log(`Lot ${i+1}/${totalBatches} traité. Tokens utilisés : ${response.data.tokenCount}, Tokens de réponse : ${response.data.responseTokenCount}`);
                 }
-        
-                log("Tous les lots ont été traités. Début de l'analyse finale...");
-        
-                // Analyse finale
-                const finalPrompt = `
-                Voici la transcription complète et corrigée d'un long document. Veuillez effectuer les tâches suivantes :
-        
-                1. Résumez les points clés principaux de l'ensemble de la transcription.
-                2. Créez une fiche de révision précise qui permet d'apprendre les points clefs sans rien ommettre.
-                3. Proposez 20 questions pertinentes avec leurs réponses, couvrant les aspects les plus significatifs de l'ensemble du document.
-        
-                Transcription complète :
-                ${fullAnalysis}
-                `;
-        
-                log("Envoi de la demande d'analyse finale...");
-                const finalResponse = await axios.post('http://localhost:3000/analyze', {
-                    prompt: finalPrompt,
-                    apiKey: anthropicKey
-                });
-        
-                document.getElementById("result").textContent += "\n\nANALYSE FINALE:\n\n" + finalResponse.data.content[0].text;
-                updateGlobalProgress(100);
-                document.getElementById("downloadButton").style.display = "block";
-                log("Analyse finale terminée. Tokens utilisés : " + finalResponse.data.tokenCount + ", Tokens de réponse : " + finalResponse.data.responseTokenCount);
+
+                log("Analyse terminée.");
+                document.getElementById("downloadAnalysisButton").style.display = "block";
+                document.getElementById("synthesizeButton").style.display = "block";
             } catch (error) {
                 log("Erreur lors de l'analyse : " + error.message);
                 alert("Une erreur est survenue lors de l'analyse. Veuillez vérifier les logs de débogage pour plus de détails.");
             }
         }
-        
+
+        async function synthesizeAnalysis() {
+            try {
+                const anthropicKey = document.getElementById("anthropicKey").value;
+                if (!analyzedTranscription || !anthropicKey) {
+                    throw new Error("Veuillez d'abord analyser la transcription ou charger une analyse.");
+                }
+
+                log("Début de la synthèse...");
+                updateGlobalProgress(0);
+
+                const prompt = `
+                Voici la transcription complète et corrigée d'un long document. Crée une fiche de synthèse complète sans rien oublier ni rien inventer, en utilisant le format Markdown.
+                Cette fiche doit inclure avec un chapitrage: un titre, le Résumé des points clés principaux de l'ensemble de la transcription, 
+                Pour chaque paragraphe de la transcription détailles chacune des idées principales du paragraphe en 3 phrases completes et didactiques maximum que tu rangeras dans une liste à points en mettant en gras le titre de l'idée principale. Saute une ligne entre le titre et le 1er point de la liste à points, puis entre chacun des points de la liste. 
+
+                Enfin, ajoute une section "Question de cours" et Propose 20 questions pertinentes avec leurs réponses, en expliquant pourquoi c'est la bonne réponse vis a vis du verbatim, couvrant les aspects les plus significatifs de l'ensemble du verbatim.
+
+                Transcription complète :
+                ${analyzedTranscription}
+                `;
+
+                log("Envoi de la demande de synthèse...");
+                const response = await axios.post('http://localhost:3000/analyze', {
+                    prompt,
+                    apiKey: anthropicKey
+                });
+
+                document.getElementById("synthesisResult").innerHTML = marked.parse(response.data.content[0].text);
+                updateGlobalProgress(100);
+                document.getElementById("downloadSynthesisButton").style.display = "block";
+                log("Synthèse terminée. Tokens utilisés : " + response.data.tokenCount + ", Tokens de réponse : " + response.data.responseTokenCount);
+            } catch (error) {
+                log("Erreur lors de la synthèse : " + error.message);
+                alert("Une erreur est survenue lors de la synthèse. Veuillez vérifier les logs de débogage pour plus de détails.");
+            }
+        }
 
         function updateGlobalProgress(percent) {
             document.getElementById("globalProgress").style.width = `${percent}%`;
@@ -553,14 +577,44 @@
             };
         }
 
-        function downloadResult() {
-            const result = document.getElementById("result").textContent;
-            const blob = new Blob([result], { type: "text/plain;charset=utf-8" });
+        function loadAnalysis() {
+            const input = document.getElementById('analysisFile');
+            input.click();
+            input.onchange = function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        analyzedTranscription = e.target.result;
+                        document.getElementById("analyzeResult").textContent = analyzedTranscription;
+                        log("Analyse chargée avec succès");
+                        document.getElementById("synthesizeButton").style.display = "block";
+                    };
+                    reader.readAsText(file);
+                }
+            };
+        }
+
+        function downloadAnalysis() {
+            const blob = new Blob([analyzedTranscription], { type: "text/plain;charset=utf-8" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.style.display = "none";
             a.href = url;
-            a.download = "analysis_result.txt";
+            a.download = "analyzed_transcription.txt";
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadSynthesis() {
+            const synthesisContent = document.getElementById("synthesisResult").innerHTML;
+            const blob = new Blob([synthesisContent], { type: "text/html;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = "synthesis.html";
             document.body.appendChild(a);
             a.click();
             URL.revokeObjectURL(url);
