@@ -34,7 +34,7 @@ app.post('/test-keys', async (req, res) => {
 
         // Test de la clé Anthropic
         const anthropicResponse = await axios.post('https://api.anthropic.com/v1/messages', {
-            model: "claude-3-opus-20240229",
+            model: "claude-3-5-sonnet-20240620",
             max_tokens: 1,
             messages: [{ role: "user", content: "Test" }]
         }, {
@@ -76,8 +76,8 @@ app.post('/analyze', async (req, res) => {
         log(`Requête d'analyse reçue. Nombre de tokens: ${tokenCount}`);
 
         const response = await axios.post('https://api.anthropic.com/v1/messages', {
-            model: "claude-3-opus-20240229",
-            max_tokens: 4000,
+            model: "claude-3-5-sonnet-20240620",
+            max_tokens: 8000,
             messages: [{ role: "user", content: prompt }]
         }, {
             headers: {
